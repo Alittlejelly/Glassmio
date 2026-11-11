@@ -90,6 +90,8 @@ fun GlasmioCascadingMenu(
     menuAnchorState: GlasmioMenuAnchorState? = null,
     useAccentIcons: Boolean = true,
     centerHorizontally: Boolean = false,
+    /** 展开位置贴齐锚点左边缘（而不是右边缘）：菜单从被点击的标题/名字处向左生长。 */
+    alignToAnchorStart: Boolean = false,
     expandFromAnchor: Alignment.Horizontal? = null,
     forceBelowAnchor: Boolean = false,
     morphFromAnchor: Boolean = true,
@@ -166,6 +168,7 @@ fun GlasmioCascadingMenu(
         keepAnchorVisible = true,
         fullScreen = true,
         centerHorizontally = centerHorizontally,
+        alignToAnchorStart = alignToAnchorStart,
         expandFromAnchor = expandFromAnchor,
         forceBelowAnchor = forceBelowAnchor,
         menuScale = menuScale,

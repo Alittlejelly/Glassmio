@@ -34,6 +34,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -118,6 +119,23 @@ fun rememberGlasmioHeaderScrollEdge(
     return progress
 }
 
+/**
+ * 不解包的版本：返回 [State]，由使用方在绘制阶段读取。
+ *
+ * 滚动进度每帧都在变，在组合阶段读它会让整页（包括列表内容）跟着每帧重组。
+ * 只要把读取点下移到一个 `graphicsLayer` / draw 回调里，画面结果完全一致，但没有重组开销。
+ */
+@Composable
+fun rememberGlasmioHeaderScrollEdgeState(
+    state: LazyListState,
+    distance: Dp = GlasmioHeaderCollapseDefaults.EnterBreakpoint,
+): State<Float> {
+    val distancePx = with(LocalDensity.current) { distance.toPx().coerceAtLeast(1f) }
+    return remember(state, distancePx) {
+        derivedStateOf { scrollEdge(state.firstVisibleItemIndex, state.firstVisibleItemScrollOffset, distancePx) }
+    }
+}
+
 internal fun scrollEdge(firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int, distancePx: Float): Float =
     if (firstVisibleItemIndex > 0) 1f
     else (firstVisibleItemScrollOffset / distancePx.coerceAtLeast(1f)).coerceIn(0f, 1f)
@@ -157,6 +175,22 @@ fun rememberGlasmioHeaderCollapse(
     animationSpec = animationSpec,
 )
 
+/** 不解包的折叠进度，用法同 [rememberGlasmioHeaderCollapse]，由使用方在绘制阶段读取。 */
+@Composable
+fun rememberGlasmioHeaderCollapseState(
+    state: LazyListState,
+    enterBreakpoint: Dp = GlasmioHeaderCollapseDefaults.EnterBreakpoint,
+    exitBreakpoint: Dp = GlasmioHeaderCollapseDefaults.ExitBreakpoint,
+    animationSpec: AnimationSpec<Float> = GlasmioHeaderCollapseDefaults.Spring,
+): State<Float> = rememberBreakpointCollapseState(
+    stateKey = state,
+    firstVisibleItemIndex = { state.firstVisibleItemIndex },
+    firstVisibleItemScrollOffset = { state.firstVisibleItemScrollOffset },
+    enterBreakpoint = enterBreakpoint,
+    exitBreakpoint = exitBreakpoint,
+    animationSpec = animationSpec,
+)
+
 @Composable
 private fun rememberBreakpointCollapse(
     stateKey: Any,
@@ -165,7 +199,24 @@ private fun rememberBreakpointCollapse(
     enterBreakpoint: Dp,
     exitBreakpoint: Dp,
     animationSpec: AnimationSpec<Float>,
-): Float {
+): Float = rememberBreakpointCollapseState(
+    stateKey = stateKey,
+    firstVisibleItemIndex = firstVisibleItemIndex,
+    firstVisibleItemScrollOffset = firstVisibleItemScrollOffset,
+    enterBreakpoint = enterBreakpoint,
+    exitBreakpoint = exitBreakpoint,
+    animationSpec = animationSpec,
+).value
+
+@Composable
+private fun rememberBreakpointCollapseState(
+    stateKey: Any,
+    firstVisibleItemIndex: () -> Int,
+    firstVisibleItemScrollOffset: () -> Int,
+    enterBreakpoint: Dp,
+    exitBreakpoint: Dp,
+    animationSpec: AnimationSpec<Float>,
+): State<Float> {
     val density = LocalDensity.current
     val enterPx = with(density) { enterBreakpoint.toPx().coerceAtLeast(1f) }
     // A wider exit threshold would make the state flip back and forth around one offset.
@@ -180,12 +231,11 @@ private fun rememberBreakpointCollapse(
                 if (next != collapsed) collapsed = next
             }
     }
-    val progress by animateFloatAsState(
+    return animateFloatAsState(
         targetValue = if (collapsed) 1f else 0f,
         animationSpec = animationSpec,
         label = "GlasmioHeaderCollapse",
     )
-    return progress
 }
 
 /**

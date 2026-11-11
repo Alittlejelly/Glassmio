@@ -306,6 +306,8 @@ fun GlasmioSearchToolbar(
     cancelLabel: String,
     placeholder: String,
     modifier: Modifier = Modifier,
+    /** 尾随按钮的符号名；默认是退出用的 xmark，确认搜索时可换成放大镜。 */
+    cancelIcon: String = "xmark",
     style: GlassSurfaceStyle = GlassSurfaceStyle.Navigation,
     focusRequester: FocusRequester = remember { FocusRequester() },
     autoFocus: Boolean = true,
@@ -379,7 +381,7 @@ fun GlasmioSearchToolbar(
                 modifier = Modifier.size(48.dp).testTag("GlasmioSearchCancelSurface"),
                 enabled = cancelReveal > 0.5f,
             ) {
-                SfIcon("xmark", cancelLabel, size = 20.dp, tint = colors.content)
+                SfIcon(cancelIcon, cancelLabel, size = 20.dp, tint = colors.content)
             }
         }
     }

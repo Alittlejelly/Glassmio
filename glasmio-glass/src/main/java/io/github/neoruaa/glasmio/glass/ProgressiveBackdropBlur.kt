@@ -1,6 +1,10 @@
 package io.github.neoruaa.glasmio.glass
 
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
@@ -188,6 +192,22 @@ fun Modifier.progressiveBlurBackdrop(
 )
 
 /**
+ * 绘制阶段读取的版本：滚动进度这类**每帧都在变**的值从这里传，调用方就不必在组合阶段
+ * 读取它，整页也就不会每帧重组。视觉结果与 [progressiveBlurBackdrop] 完全相同。
+ */
+fun Modifier.progressiveBlurBackdrop(
+    backdrop: Backdrop,
+    progress: () -> Float,
+    maxRadius: Dp = 10.dp,
+): Modifier = graphicsLayer {
+    alpha = progress().coerceIn(0f, 1f)
+}.drawPlainBackdrop(
+    backdrop = backdrop,
+    shape = { RectangleShape },
+    effects = { progressiveBackdropBlur(maxRadius.toPx()) },
+)
+
+/**
  * Apply to foreground content before recording the blur source, leaving its background separate.
  * At full reveal alpha rises linearly from 25% at [headerTop] to 100% at [headerHeight].
  * The end stays aligned with the solid header's bottom; the Gaussian blur remains independent.
@@ -212,6 +232,38 @@ fun Modifier.scrollEdgeContentFade(
         onDrawWithContent {
             drawContent()
             drawRect(opacityMask, blendMode = BlendMode.DstIn)
+        }
+    }
+}
+
+/**
+ * 绘制阶段读取的版本。遮罩强度在绘制时求值，调用方不必在组合阶段读取滚动进度，
+ * 因此整页不会随每个滚动像素重组。视觉结果与 [scrollEdgeContentFade] 相同：
+ * 进度为 0 时不挂任何图层，大于 0 时才挂上并逐步显现。
+ */
+fun Modifier.scrollEdgeContentFade(
+    progress: () -> Float,
+    headerHeight: Dp,
+    headerTop: Dp = 0.dp,
+): Modifier = composed {
+    val active by remember(progress) { derivedStateOf { progress() > 0f } }
+    if (!active) return@composed this
+    graphicsLayer {
+        compositingStrategy = CompositingStrategy.Offscreen
+    }.drawWithCache {
+        val header = headerHeight.toPx().coerceAtLeast(1f)
+        val top = headerTop.toPx().coerceIn(0f, header - 1f)
+        onDrawWithContent {
+            drawContent()
+            val reveal = progress().coerceIn(0f, 1f)
+            drawRect(
+                Brush.verticalGradient(
+                    colors = listOf(Color.White.copy(alpha = 1f - reveal * 0.75f), Color.White),
+                    startY = top,
+                    endY = header,
+                ),
+                blendMode = BlendMode.DstIn,
+            )
         }
     }
 }

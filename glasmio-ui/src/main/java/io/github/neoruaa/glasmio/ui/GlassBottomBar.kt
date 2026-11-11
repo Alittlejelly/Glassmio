@@ -795,6 +795,11 @@ fun <T> GlasmioNavigationBar(
                 tabItems.size,
             ) {
                 Modifier
+                    // 形变途中这块指示玻璃的权重会趋于 0，但它照样每帧重采一次背板。
+                    // 低于 2% 时直接不画（加法混合下差不到 1/255），省掉一整层全尺寸采样。
+                    .drawWithContent {
+                        if (innerGlassVisibilityState.value > .02f) drawContent()
+                    }
                     .drawPlainBackdrop(
                         backdrop = if (appearance.usesBackdrop) sourceBackdrop else emptyBackdrop(),
                         shape = { Capsule() },

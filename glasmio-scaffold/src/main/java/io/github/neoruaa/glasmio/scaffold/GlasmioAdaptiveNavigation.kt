@@ -172,6 +172,8 @@ fun GlasmioAdaptiveNavigationScaffold(
     extendContentUnderSidebar: Boolean = false,
     contentBackdrop: LayerBackdrop? = null,
     overlay: @Composable BoxScope.() -> Unit = {},
+    // 返回键优先级：页面栈还能回退时交给页面，回不去了才收侧栏。
+    canNavigateBack: () -> Boolean = { false },
     content: @Composable BoxScope.() -> Unit,
 ) {
     val open = layout == GlasmioNavigationLayout.TopTabs && sidebarEnabled && state.sidebarExpanded
@@ -281,6 +283,10 @@ fun GlasmioAdaptiveNavigationScaffold(
                 .then(if ((if (usesTabMorph) native.expanded else open) && !blocked) Modifier else Modifier.clearAndSetSemantics {})) {
                 GlasmioSidebar(
                     backdrop = sidebarBackdrop,
+                    // 这里必须保持 0f：侧栏本体是全高的一大块，形变期间以极小 alpha 画它
+                    // 等于每帧多跑一整套侧栏玻璃（含内容延伸的两个 RuntimeShader 滤镜），
+                    // 实测会让形变掉到个位数帧。而且收起后 primary 根本不会被放置，
+                    // 也就不存在"首次出图"的问题。
                     backgroundAlpha = { if (usesTabMorph && native.running) 0f else 1f },
                     onContentPreview = if (usesTabMorph && native.running) ({ layer, size ->
                         sidebarLayer = layer
@@ -292,19 +298,29 @@ fun GlasmioAdaptiveNavigationScaffold(
                 }
             }
             Box(Modifier.fillMaxSize().clearAndSetSemantics {}) {
-                if (usesTabMorph && native.running) {
+                if (usesTabMorph) {
+                    // Stay composed across endpoints. Creating this surface only while the
+                    // spring runs meant every open re-allocated its layers and re-compiled the
+                    // material programs inside the first animated frames. While idle the
+                    // surface is measured to nothing and placed nowhere, so it costs a measure
+                    // of five empty nodes and draws no glass.
+                    val morphVisible = { native.running }
                     GlasmioSidebarMorphSurface(backdrop, { native.bounds }, { native.cornerRadius }, { native.materialProgress },
                         sidebarBackdrop = morphSidebarBackdrop,
                         tabsColors = coordinator.tabsColors ?: LocalGlassColors.current,
-                        tabsAppearance = coordinator.tabsAppearance ?: LocalGlassAppearance.current)
+                        tabsAppearance = coordinator.tabsAppearance ?: LocalGlassAppearance.current,
+                        visible = morphVisible)
                     TabSidebarContentPreview({ coordinator.tabsLayer }, { coordinator.tabsLayerSize },
-                        { native.bounds }, { native.cornerRadius }, { native.tabsPreviewProgress })
+                        { native.bounds }, { native.cornerRadius }, { native.tabsPreviewProgress },
+                        visible = morphVisible)
                     TabSidebarContentPreview({ sidebarLayer }, { sidebarLayerSize },
-                        { native.bounds }, { native.cornerRadius }, { native.sidebarPreviewProgress })
+                        { native.bounds }, { native.cornerRadius }, { native.sidebarPreviewProgress },
+                        visible = morphVisible)
                 }
             }
             // Keep page < sidebar < overlay priority without dismissing the pane beneath a player.
-            BackHandler(open) { state.sidebarExpanded = false }
+            // 有页面可回退时这里不接管返回，交给页面自己的返回处理（平板上一律先退页面）。
+            BackHandler(open && !canNavigateBack()) { state.sidebarExpanded = false }
             Box(Modifier.fillMaxSize(), content = overlay)
         }) { measurables, constraints ->
             val width = constraints.maxWidth
@@ -313,15 +329,21 @@ fun GlasmioAdaptiveNavigationScaffold(
             val overlay = width - paneWidth < 320.dp.roundToPx()
             placement.width = paneWidth
             placement.overlays = overlay
-            val p = if (usesTabMorph) native.contentInsetProgress else progress.value.coerceIn(0f, 1f)
+            // The tab morph renders its scrim from native.contentInsetProgress in the draw
+            // phase. Reading that per-frame track here would invalidate the host's measure on
+            // every spring frame, which re-measures the whole page subtree (and its grids)
+            // sixty times a second. Only the non-morph split still needs the animated slide.
+            val p = if (usesTabMorph) 1f else progress.value.coerceIn(0f, 1f)
+            // Endpoints only; the morphing fraction stays in the draw phase.
+            val scrimPlaced = if (usesTabMorph) native.expanded || native.running else p > 0f
             val body = measurables[0].measure(Constraints.fixed(width, height))
-            val scrim = measurables[1].measure(Constraints.fixed(if (overlay && p > 0f) width else 0, height))
+            val scrim = measurables[1].measure(Constraints.fixed(if (overlay && scrimPlaced) width else 0, height))
             val primary = measurables[2].measure(Constraints.fixed(paneWidth, height))
             val morph = measurables[3].measure(Constraints.fixed(width, height))
             val foreground = measurables[4].measure(Constraints.fixed(width, height))
             layout(width, height) {
                 body.placeRelative(0, 0)
-                if (overlay && p > 0f) scrim.placeRelative(0, 0)
+                if (overlay && scrimPlaced) scrim.placeRelative(0, 0)
                 if (usesTabMorph) {
                     if (native.expanded || native.running) primary.placeRelative(0, 0)
                 } else if (p > 0f) primary.placeRelative(((p - 1f) * paneWidth).roundToInt(), 0)

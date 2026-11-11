@@ -2,7 +2,9 @@ package io.github.neoruaa.glasmio.ui
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
@@ -301,6 +303,16 @@ fun <T> GlasmioTabBar(
                 spring(damping, (4.0 * PI * PI / (response * response)).toFloat(), .001f))
         }
         fun panelScale() = 1f + 16f * puff.value / longDimension
+        // 形变期间不是把背板打到 0，而是保留 1/255：alpha 正好为 0 时这一层会被整体裁掉，
+        // 采样纹理、滤镜链和投影一起冻住；形变结束切回来时它们要现建，投影会有 80ms 的空档，
+        // 看起来就是阴影闪一下。顶栏只有 44dp 高、采样倍率 0.5，常驻 1/255 的成本很小，
+        // 换来的是切回可以瞬时完成、投影无缝衔接。
+        val backgroundVisible = presentation.backgroundVisible()
+        val backgroundAlpha by animateFloatAsState(
+            targetValue = if (backgroundVisible) 1f else 0.004f,
+            animationSpec = tween(0),
+            label = "tabBarBackground",
+        )
         val panelTransform = Modifier.graphicsLayer {
             translationX = panelOffset()
             scaleX = panelScale()
@@ -308,7 +320,7 @@ fun <T> GlasmioTabBar(
         }
         Box(Modifier.fillMaxSize().graphicsLayer {
             translationX = panelOffset()
-            alpha = if (presentation.backgroundVisible()) 1f else 0f
+            alpha = backgroundAlpha
         }
             .then(if (appearance.usesBackdrop) Modifier.layerBackdrop(trackBackdrop) else Modifier)
             .navigationGlassBackground(

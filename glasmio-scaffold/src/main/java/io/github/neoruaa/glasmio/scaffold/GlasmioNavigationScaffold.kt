@@ -14,6 +14,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.LayerOutsets
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
@@ -179,7 +180,19 @@ fun GlasmioPageTitle(entryKey: Any, modifier: Modifier = Modifier) {
             Column(
                 Modifier.align(if (startsAtLeading) Alignment.CenterStart else Alignment.Center)
                     .fillMaxWidth().padding(start = start, end = end)
-                    .graphicsLayer { alpha = (spec.scrollState?.collapseProgress?.invoke() ?: 1f).coerceIn(0f, 1f) },
+                    .graphicsLayer {
+                        // 一镜到底：小标题不再和列表里的大标题做交叉淡入（那样会同时看到两个）。
+                        // 它在后半程才出现，并且从大一号收缩到正常大小、从下方轻微归位，
+                        // 读起来是同一个标题在缩小，而不是两段文字互相替换。
+                        val p = (spec.scrollState?.collapseProgress?.invoke() ?: 1f).coerceIn(0f, 1f)
+                        val appear = ((p - .45f) / .45f).coerceIn(0f, 1f)
+                        alpha = appear
+                        val scale = 1f + .5f * (1f - appear)
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = TransformOrigin(if (startsAtLeading) 0f else .5f, .5f)
+                        translationY = (1f - appear) * 10.dp.toPx()
+                    },
                 horizontalAlignment = if (startsAtLeading) Alignment.Start else Alignment.CenterHorizontally,
             ) {
                 Text(spec.title, style = if (spec.style == GlasmioTopBarStyle.CompactLargeTitle) IosTypography.largeTitle else IosTypography.headline,
@@ -301,6 +314,12 @@ fun GlasmioPageBody(
     backgroundColor: androidx.compose.ui.graphics.Color = LocalGlassColors.current.groupedBackground,
     backgroundBrush: androidx.compose.ui.graphics.Brush? = null,
     topBarBlurProgress: Float = 0f,
+    /**
+     * 与 [topBarBlurProgress] 等价的"绘制阶段读取"入口。滚动进度每帧都在变，
+     * 从组合阶段读它会让整页（含列表内容）跟着每帧重组；传这个 provider 则只在绘制时求值，
+     * 画面结果完全一致。
+     */
+    topBarBlurProgressProvider: (() -> Float)? = null,
     backdrop: LayerBackdrop = rememberLayerBackdrop(),
     background: (@Composable BoxScope.() -> Unit)? = null,
     content: @Composable BoxScope.(PaddingValues) -> Unit,
@@ -308,7 +327,8 @@ fun GlasmioPageBody(
     val appearance = LocalGlassAppearance.current
     val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val headerHeight = statusBarHeight + 62.dp
-    val progress = topBarBlurProgress.coerceIn(0f, 1f)
+    val progress: () -> Float = topBarBlurProgressProvider
+        ?: { topBarBlurProgress.coerceIn(0f, 1f) }
     Box(modifier.fillMaxSize()) {
         Box(
             Modifier.fillMaxSize().glassBackdropSource(backdrop).trackBackdropPosition(backdrop),
@@ -326,7 +346,7 @@ fun GlasmioPageBody(
                 .then(if (appearance.usesBackdrop) {
                     Modifier.progressiveBlurBackdrop(backdrop, progress)
                 } else {
-                    Modifier.graphicsLayer { alpha = progress }.background(backgroundColor.copy(alpha = 1f))
+                    Modifier.graphicsLayer { alpha = progress().coerceIn(0f, 1f) }.background(backgroundColor.copy(alpha = 1f))
                 }),
         )
     }

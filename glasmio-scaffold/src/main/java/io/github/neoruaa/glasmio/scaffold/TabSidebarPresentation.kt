@@ -20,12 +20,15 @@ import androidx.compose.ui.graphics.layer.GraphicsLayer
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.shapes.RoundedRectangle
 import io.github.neoruaa.glasmio.ui.GlasmioTabBarPresentation
 import io.github.neoruaa.glasmio.core.GlassColors
 import io.github.neoruaa.glasmio.core.GlassAppearance
+import kotlin.math.ceil
 
 /** One presentation owner for the adaptive host and its measured top-tabs slot. */
 internal class AdaptiveSidebarCoordinator(initialExpanded: Boolean) {
@@ -72,12 +75,17 @@ internal fun TabSidebarContentPreview(
     bounds: () -> Rect,
     cornerRadius: () -> Float,
     progress: () -> Float,
+    visible: () -> Boolean = { true },
 ) {
     val density = LocalDensity.current
     val rendered = rememberGraphicsLayer()
+    val blurEffects = remember { PortalBlurCache() }
+    val outlineCache = remember(density, cornerRadius) { PortalOutlineCache(density, cornerRadius) }
     Box(Modifier.fillMaxSize().drawWithCache {
-        val source = layer()
-        val endpoint = endpointSize()
+        // Skip the endpoint record while the portal is parked, and keep it off the
+        // per-frame path: the cache rebuilds only when the portal reopens.
+        val source = if (visible()) layer() else null
+        val endpoint = if (source != null) endpointSize() else IntSize.Zero
         val padding = with(density) { 8.dp.roundToPx() }
         // Keep a reference to the owned endpoint layer. Its display list can update without
         // recording this padding wrapper again for every spring frame.
@@ -95,12 +103,10 @@ internal fun TabSidebarContentPreview(
             if (frame.width <= 0f || frame.height <= 0f) return@onDrawWithContent
             val blur = (1f - p) * with(density) { 4.dp.toPx() }
             rendered.alpha = p
-            rendered.renderEffect = if (blur > .01f) RenderEffect.createBlurEffect(blur, blur, Shader.TileMode.DECAL).asComposeRenderEffect() else null
-            val shape = RoundedRectangle(with(density) { cornerRadius().coerceAtLeast(0f).toDp() })
-            val outline = shape.createOutline(Size(frame.width, frame.height), layoutDirection, density)
+            rendered.renderEffect = blurEffects.effectFor(blur)
             clip.rewind()
             clip.apply {
-                when (outline) {
+                when (val outline = outlineCache.outlineOf(frame.width, frame.height)) {
                     is Outline.Generic -> addPath(outline.path)
                     is Outline.Rounded -> addRoundRect(outline.roundRect)
                     is Outline.Rectangle -> addRect(outline.rect)
@@ -117,4 +123,56 @@ internal fun TabSidebarContentPreview(
             }
         }
     })
+}
+
+/**
+ * The portal's 4 pt → 0 blur was rebuilt on every spring frame, handing HWUI a brand-new native
+ * filter graph for a full-size endpoint layer on each of them. Half-pixel steps are visually
+ * indistinguishable here and let one effect instance survive consecutive frames.
+ */private class PortalBlurCache {
+    private var radiusPx = Float.NaN
+    private var effect: androidx.compose.ui.graphics.RenderEffect? = null
+
+    fun effectFor(blurPx: Float): androidx.compose.ui.graphics.RenderEffect? {
+        if (blurPx <= .5f) {
+            radiusPx = 0f
+            effect = null
+            return null
+        }
+        val quantized = ceil(blurPx * 2f) / 2f
+        if (quantized != radiusPx || effect == null) {
+            radiusPx = quantized
+            effect = RenderEffect.createBlurEffect(quantized, quantized, Shader.TileMode.DECAL)
+                .asComposeRenderEffect()
+        }
+        return effect
+    }
+}
+
+/**
+ * Both portals rebuild the same continuous-corner outline on every spring frame. The radius only
+ * changes with the animation, so cache the last (size, radius) result: consecutive frames reuse it
+ * until the geometry actually moves.
+ */
+private class PortalOutlineCache(
+    private val density: Density,
+    private val cornerRadius: () -> Float,
+) {
+    private var width = Float.NaN
+    private var height = Float.NaN
+    private var radius = Float.NaN
+    private var outline: Outline? = null
+
+    fun outlineOf(w: Float, h: Float): Outline {
+        val r = cornerRadius().coerceAtLeast(0f)
+        val cached = outline
+        if (cached != null && w == width && h == height && r == radius) return cached
+        val next = RoundedRectangle(with(density) { r.toDp() })
+            .createOutline(Size(w, h), LayoutDirection.Ltr, density)
+        width = w
+        height = h
+        radius = r
+        outline = next
+        return next
+    }
 }

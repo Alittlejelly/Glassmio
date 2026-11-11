@@ -76,7 +76,11 @@ import io.github.neoruaa.glasmio.glass.PressHighlightRenderer
 
 // Sample and soft material fields share this scale. Keep moving outlines, optical
 // highlights and foreground at native resolution while reducing filter bandwidth.
-private const val DefaultGlassRenderScale = 0.5f
+// The screen-space blur is preserved by scaling both the capture and every radius by this
+// value, so lowering it only coarsens the soft backdrop grid: the morph path issues the same
+// pass chain over ~36% fewer texels, which is what actually limits frame time while a
+// silhouette springs between endpoints.
+private const val DefaultGlassRenderScale = 0.4f
 
 @Composable
 fun rememberGlassMorphRenderer(
